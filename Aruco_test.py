@@ -2,8 +2,10 @@ import cv2
 import cv2.aruco as aruco
 import numpy as np
 
-MARKER_SIZE = 200
-MARGIN = 50
+MARKER_SIZE = 180
+MARGIN = 20
+SHIFT_UP = 80
+
 
 # Get dictionary
 aruco_dict = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
