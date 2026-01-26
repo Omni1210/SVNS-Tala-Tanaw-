@@ -4,7 +4,7 @@ import numpy as np
 KNOWN_DISTANCE = 0.3      # meters (measure with ruler)
 KNOWN_MARKER_SIZE = 0.1  # meters
 
-aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_5X5_50)
+aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
 parameters = cv2.aruco.DetectorParameters()
 detector = cv2.aruco.ArucoDetector(aruco_dict, parameters)
 
