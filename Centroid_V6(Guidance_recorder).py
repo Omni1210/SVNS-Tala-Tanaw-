@@ -3,16 +3,21 @@ import cv2.aruco as aruco
 import numpy as np
 import json
 import os
+import time
 
 # -----------------------------
 # CONFIGURATION
 # -----------------------------
-MARKER_SIZE = 0.042          # ← CHANGE THIS! Measure ONE individual ArUco marker side (in meters)
-# Example: if one marker is 42 mm wide → 0.042
-# Measure from outer black edge to opposite outer black edge (including white quiet zone)
+MARKER_SIZE = 0.042          # Your measured value (one individual ArUco marker in meters)
 
 REFERENCE_FILE = "marker_reference.json"
 CALIB_FILE = "camera_calibration.npz"
+
+# Video save folder (your path)
+VIDEO_SAVE_FOLDER = r"D:\Users\Admin\Downloads\ERC\Sim_test\calib_sim"
+
+# Make sure the folder exists
+os.makedirs(VIDEO_SAVE_FOLDER, exist_ok=True)
 
 # Load calibration
 if os.path.exists(CALIB_FILE):
@@ -53,7 +58,6 @@ def detect_markers(frame, undistort=False):
             corners, MARKER_SIZE, camera_matrix, dist_coeffs
         )
         
-        # Sub-pixel refinement
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         for i in range(len(corners)):
             cv2.cornerSubPix(gray, corners[i].reshape(4, 1, 2), (11, 11), (-1, -1),
@@ -104,12 +108,48 @@ def compute_offsets(current, reference):
 
     return offsets.flatten(), avg_rotation.flatten(), float(avg_distance), avg_tvec.flatten()
 
+def get_cardinal_directions(current):
+    if len(current) != 4:
+        return {}
+
+    cents = {mid: np.array(d["centroid"]) for mid, d in current.items()}
+    by_y = sorted(cents.items(), key=lambda x: x[1][1])
+    by_x = sorted(cents.items(), key=lambda x: x[1][0])
+
+    return {
+        'North': by_y[0][0],
+        'South': by_y[-1][0],
+        'West':  by_x[0][0],
+        'East':  by_x[-1][0],
+    }
+
+def compute_heading_error(current, reference, directions):
+    if 'North' not in directions:
+        return None
+
+    north_id = directions['North']
+    if north_id not in current or north_id not in reference:
+        return None
+
+    curr_rvec = np.array(current[north_id]["rvec"])
+    ref_rvec  = np.array(reference[north_id]["rvec"])
+
+    R_curr, _ = cv2.Rodrigues(curr_rvec)
+    R_ref,  _ = cv2.Rodrigues(ref_rvec)
+
+    R_rel = R_curr @ R_ref.T
+
+    yaw_rad = np.arctan2(R_rel[1, 0], R_rel[0, 0])
+    heading_error_deg = np.degrees(yaw_rad)
+    heading_error_deg = (heading_error_deg + 180) % 360 - 180
+
+    return heading_error_deg
+
 # -----------------------------
 # MAIN
 # -----------------------------
 mode = input("Enter mode ('calibrate' or 'check'): ").strip().lower()
 
-# Camera open with fallback
 cap = None
 for backend in [cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY]:
     for idx in range(4):
@@ -164,13 +204,21 @@ while True:
                 print("No markers detected.")
         break
 
-# CHECK MODE
+# CHECK MODE – Landing Guidance + Video Recording
 if mode == "check":
     reference = load_reference()
     if reference is None:
         print("No reference found. Run 'calibrate' first.")
     else:
-        print("Check mode active. Press ESC to exit.")
+        print("Check mode active – Landing guidance ON. Press ESC to exit.")
+        
+        # Start video recording in your specified folder
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        video_filename = os.path.join(VIDEO_SAVE_FOLDER, f"drone_guidance_{timestamp}.mp4")
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        out = cv2.VideoWriter(video_filename, fourcc, 20.0, (int(cap.get(3)), int(cap.get(4))))
+        print(f"Recording started → {video_filename}")
+        
         while True:
             ret, frame = cap.read()
             if not ret:
@@ -193,25 +241,85 @@ if mode == "check":
                                       np.array(data["rvec"]), np.array(data["tvec"]), 0.05)
 
             offsets, rotation, avg_distance, avg_tvec = compute_offsets(current, reference)
+            directions = get_cardinal_directions(current)
 
+            # Directions
+            if directions:
+                print("\nDirections:")
+                for dir_name, mid in directions.items():
+                    print(f"  {dir_name}: ID {mid}")
+                for dir_name, mid in directions.items():
+                    if mid in current:
+                        cx, cy = map(int, current[mid]["centroid"])
+                        cv2.putText(frame, dir_name.upper(), (cx + 35, cy - 25),
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 165, 0), 2, cv2.LINE_AA)
+
+            # Landing Guidance: Position & Rotation
             if offsets is not None:
                 ox, oy, oz = offsets
-                cv2.putText(frame, f"Center Offset: X={ox:.3f}m Y={oy:.3f}m Z={oz:.3f}m",
-                            (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-                cv2.putText(frame, f"Avg Distance: {avg_distance:.3f} m",
-                            (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-                cv2.putText(frame, f"Heading diff: {np.linalg.norm(rotation):.3f} rad",
-                            (10, 120), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 165, 0), 2)
+                lateral_error = np.sqrt(ox**2 + oy**2)
 
-                # Debug: individual distances
-                print("Individual distances:")
-                for id_ in current:
-                    dist = np.linalg.norm(np.array(current[id_]["tvec"]))
-                    print(f"  ID {id_}: {dist:.3f} m")
+                if lateral_error < 0.05 and abs(oz) < 0.10:
+                    status = "GOOD TO LAND"
+                    color = (0, 255, 0)
+                elif lateral_error < 0.15 and abs(oz) < 0.30:
+                    status = "ADJUST SLIGHTLY"
+                    color = (0, 255, 255)
+                else:
+                    status = "ALIGN / TOO FAR"
+                    color = (0, 0, 255)
 
-            cv2.imshow("Check Markers (ESC to exit)", frame)
+                cv2.putText(frame, f"STATUS: {status}", (10, 160),
+                            cv2.FONT_HERSHEY_SIMPLEX, 1.0, color, 3)
+                cv2.putText(frame, f"Lateral: {lateral_error:.3f} m", (10, 200),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+                cv2.putText(frame, f"Height: {oz:.3f} m", (10, 230),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, color, 2)
+
+                # Correction arrow
+                h, w = frame.shape[:2]
+                center = (w // 2, h // 2)
+                arrow_end = (int(center[0] + ox * 1200), int(center[1] + oy * 1200))
+                cv2.arrowedLine(frame, center, arrow_end, color, 6, tipLength=0.4)
+
+            heading_error = compute_heading_error(current, reference, directions)
+            if heading_error is not None:
+                if abs(heading_error) < 5:
+                    rot_text = "HEADING ALIGNED"
+                    rot_color = (0, 255, 0)
+                else:
+                    dir_text = "RIGHT" if heading_error > 0 else "LEFT"
+                    rot_text = f"Rotate {dir_text} {abs(heading_error):.1f}°"
+                    rot_color = (255, 215, 0)
+
+                cv2.putText(frame, rot_text, (10, 270),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.9, rot_color, 2)
+
+                # Rotation indicator
+                h, w = frame.shape[:2]
+                center = (w // 2, h // 2)
+                radius = 80
+                start_angle = 90
+                end_angle = 90 + heading_error * 3
+                cv2.ellipse(frame, center, (radius, radius), 0, start_angle, end_angle,
+                            rot_color, 4, cv2.LINE_AA)
+
+            # Debug distances
+            print("Individual distances:")
+            for id_ in current:
+                dist = np.linalg.norm(np.array(current[id_]["tvec"]))
+                print(f"  ID {id_}: {dist:.3f} m")
+
+            # Save frame to video
+            out.write(frame)
+
+            cv2.imshow("Landing Guidance (ESC to exit)", frame)
             if cv2.waitKey(1) & 0xFF == 27:
                 break
+
+        # Finish video
+        out.release()
+        print(f"Video saved → {video_filename}")
 
 cap.release()
 cv2.destroyAllWindows()

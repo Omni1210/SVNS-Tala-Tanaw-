@@ -7,3 +7,4 @@ for i in range(5):
         cap.release()
     else:
         print(f"Camera index {i} NOT available")
+''

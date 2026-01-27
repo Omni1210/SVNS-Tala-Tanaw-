@@ -26,7 +26,7 @@ objp = np.array([
     [-MARKER_SIZE/2, -MARKER_SIZE/2, 0]
 ], dtype=np.float32)
 
-cap = cv2.VideoCapture(1, cv2.CAP_DSHOW)
+cap = cv2.VideoCapture(0)
 collected = 0
 print("Point your camera at the marker from different angles.")
 print("Press SPACE to capture a view. ESC to exit.")

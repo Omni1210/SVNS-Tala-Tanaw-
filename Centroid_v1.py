@@ -24,7 +24,7 @@ detector = cv2.aruco.ArucoDetector(aruco_dict, parameters)
 # -------------------------
 # Iriun camera setup
 # -------------------------
-cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+cap = cv2.VideoCapture(0)
 cap.set(cv2.CAP_PROP_FRAME_WIDTH, FRAME_WIDTH)
 cap.set(cv2.CAP_PROP_FRAME_HEIGHT, FRAME_HEIGHT)
 
