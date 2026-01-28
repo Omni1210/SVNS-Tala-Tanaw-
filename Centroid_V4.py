@@ -7,7 +7,7 @@ import os
 # -----------------------------
 # CONFIGURATION
 # -----------------------------
-MARKER_SIZE = 0.042          # ← CHANGE THIS! Measure ONE individual ArUco marker side (in meters)
+MARKER_SIZE = 0.07          # ← CHANGE THIS! Measure ONE individual ArUco marker side (in meters)
 # Example: if one marker is 42 mm wide → 0.042
 # Measure from outer black edge to opposite outer black edge (including white quiet zone)
 

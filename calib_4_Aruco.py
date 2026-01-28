@@ -1,71 +1,97 @@
 import cv2
+import cv2.aruco as aruco
 import numpy as np
+import argparse
+import os
 
-# -------------------------
-# Calibration setup
-# -------------------------
-KNOWN_DISTANCE = 0.4       # meters (distance from camera to diamond centroid)
-MARKER_SIZE = 0.1          # meters (100 mm)
+def generate_diamond_aruco(
+    ids=[0, 1, 2, 3],
+    marker_size_px=200,
+    centroid_spacing_px=400,
+    margin_px=150,
+    output_path=r"D:\Users\Admin\Downloads\ERC\Aruco_Markers\diamond_aruco_4x4_50.png"
+):
+    """
+    Generate 4 ArUco markers in diamond layout and save to the specified path.
+    """
+    # Ensure the output directory exists
+    output_dir = os.path.dirname(output_path)
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir, exist_ok=True)
 
-aruco_dict = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
-parameters = cv2.aruco.DetectorParameters()
-detector = cv2.aruco.ArucoDetector(aruco_dict, parameters)
+    dictionary = aruco.getPredefinedDictionary(aruco.DICT_4X4_50)
 
-cap = cv2.VideoCapture(1)
+    # Create individual markers
+    markers = [aruco.generateImageMarker(dictionary, id, marker_size_px) for id in ids]
 
-while True:
-    ret, frame = cap.read()
-    if not ret:
-        break
+    m = marker_size_px
 
-    corners, ids, _ = detector.detectMarkers(frame)
+    # Canvas size
+    inner_width = 2 * m + centroid_spacing_px
+    inner_height = 2 * m + centroid_spacing_px
+    canvas_width = inner_width + 2 * margin_px
+    canvas_height = inner_height + 2 * margin_px
 
-    if ids is not None and len(ids) >= 1:
-        cv2.aruco.drawDetectedMarkers(frame, corners, ids)
+    canvas = np.ones((canvas_height, canvas_width), dtype=np.uint8) * 255  # white
 
-        # Compute pixel widths and focal lengths for each marker
-        focal_lengths = []
-        all_corners = []
-        for i in range(len(ids)):
-            c = corners[i][0]
-            pixel_width = np.linalg.norm(c[0] - c[1])
-            f = (pixel_width * KNOWN_DISTANCE) / MARKER_SIZE
-            focal_lengths.append(f)
+    cx = canvas_width // 2
+    cy = canvas_height // 2
 
-            # Add all corners for centroid calculation
-            all_corners.append(c)
+    positions = [
+        (cx, cy - centroid_spacing_px // 2),          # North
+        (cx - centroid_spacing_px // 2, cy),          # West
+        (cx + centroid_spacing_px // 2, cy),          # East
+        (cx, cy + centroid_spacing_px // 2),          # South
+    ]
 
-        # Average focal length
-        focal_length_avg = np.mean(focal_lengths)
+    for marker_img, (x_center, y_center) in zip(markers, positions):
+        half = m // 2
+        x_start = x_center - half
+        y_start = y_center - half
 
-        # Compute centroid from all corners
-        all_corners_array = np.vstack(all_corners)  # shape (4*num_markers,2)
-        centroid_pixel = np.mean(all_corners_array, axis=0)
-        cx, cy = int(centroid_pixel[0]), int(centroid_pixel[1])
+        if x_start < 0 or y_start < 0 or x_start + m > canvas_width or y_start + m > canvas_height:
+            print(f"Warning: Marker at ({x_center}, {y_center}) is out of bounds.")
+            continue
 
-        # Draw centroid
-        cv2.circle(frame, (cx, cy), 7, (0,0,255), -1)
-        cv2.putText(frame,
-                    f"Focal Length: {focal_length_avg:.2f}",
-                    (30, 50),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1,
-                    (0,255,0),
-                    2)
-        cv2.putText(frame,
-                    f"Centroid Pixel: ({cx},{cy})",
-                    (30, 100),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (255,0,0),
-                    2)
+        canvas[y_start:y_start + m, x_start:x_start + m] = marker_img
 
-        print(f"Focal Length (avg): {focal_length_avg:.2f}, Centroid pixel: ({cx},{cy})")
+    # Save the image
+    success = cv2.imwrite(output_path, canvas, [cv2.IMWRITE_PNG_COMPRESSION, 0])
+    if success:
+        print(f"Successfully saved to: {output_path}")
+        print(f"  Marker size: {m} px")
+        print(f"  Centroid-to-centroid spacing: {centroid_spacing_px} px")
+        print(f"  Total image size: {canvas_width} × {canvas_height} px")
+        print(f"  Margin: {margin_px} px")
+    else:
+        print(f"Failed to save image to {output_path} — check folder permissions or path.")
 
-    cv2.imshow("Calibrate Focal (4 markers centroid)", frame)
+    # Show preview (optional)
+    cv2.imshow("Diamond ArUco 4x4_50", canvas)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
-    if cv2.waitKey(1) & 0xFF == 27:  # ESC
-        break
 
-cap.release()
-cv2.destroyAllWindows()
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Generate 4 ArUco markers in diamond layout")
+    parser.add_argument("--ids", type=int, nargs=4, default=[0,1,2,3],
+                        help="Four marker IDs (default: 0 1 2 3)")
+    parser.add_argument("--marker-size", type=int, default=200,
+                        help="Size of each marker in pixels")
+    parser.add_argument("--spacing", type=int, default=400,
+                        help="Centroid-to-centroid spacing in pixels")
+    parser.add_argument("--margin", type=int, default=150,
+                        help="Margin around pattern")
+    parser.add_argument("--output", type=str,
+                        default=r"D:\Users\Admin\Downloads\ERC\Aruco_Markers\diamond_aruco_4x4_50.png",
+                        help="Full output path")
+
+    args = parser.parse_args()
+
+    generate_diamond_aruco(
+        ids=args.ids,
+        marker_size_px=args.marker_size,
+        centroid_spacing_px=args.spacing,
+        margin_px=args.margin,
+        output_path=args.output
+    )
